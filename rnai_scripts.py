@@ -108,6 +108,9 @@ def get_codon_frequencies(transcriptome):
     Obtains codon frequencies from transcriptome 
     
     transcriptome: a string of all transcripts of an organism concatenated
+    
+    returns: dictionary where keys are amino acids and values are frequencies of amino acid in
+    dictionary 
     '''
     
     codon_counts_dic = {}
@@ -126,12 +129,19 @@ def get_codon_frequencies(transcriptome):
     return codon_frequencies_dic
 
 
-def get_codon_weights_dic(transcriptome):
+def get_codon_weights_dic(transcriptome, aminoacidcode = aminoacidcode):
     '''Creates a codon weighths for each codon from a given transcriptome 
-    weights are computed as follows: w_i,j = x_i,j/yj where x_i,j is the frequency of codon i for amino acid j
+    weights are computed as follows: w_i = x_i,j/yj where x_i,j is the frequency of codon i for amino acid j
     in the transcriptome and y_j is the frequency of the maximally frequent codon for amino acid j 
     
-    transcriptome: a string of all transcripts of an organism concatenated
+    inputs:
+        transcriptome: a string of all transcripts of an organism concatenated
+    
+    outputs:
+        
+        aminoacidweights: keys are amino acids, values are arrays of w_i for all synonymous codons. The order of the codons is the as those used in aminoacidcode. 
+    
+        gencodeweights: keys are codons, values are w_i for each codon
     '''
     
     codon_frequencies_dic = get_codon_frequencies(transcriptome)
@@ -156,6 +166,14 @@ def get_codon_weights_dic(transcriptome):
     return aminoacid_weights_dic, gencode_weights_dic 
 
 def get_CAI(dna_seq, weights_dic):
+    '''
+    Obtains Codon Adaptation Index (CAI) for a given DNA_seq calculated using weights_dic
+    CAI = (w_1*.w_i*..w_N)^(1/N) where w_i is the weight of codon i. 
+    
+    Inputs:
+        dna_seq: ORF in form of string to evaluate CAI
+        weights_dic: dictionary of CAI weights for each codon. Values are weights and keys are codons. 
+    '''
     if len(dna_seq) % 3 > 0.:
         raise ValueError("Length of DNA sequence must be divisble by 3")
     ncodons = int(len(dna_seq)//3)
@@ -166,23 +184,31 @@ def get_CAI(dna_seq, weights_dic):
     return cai**(1/ncodons)
 
 
-def get_hamming_dist(seq1, seq2):
+def get_hamming_dist(seq1, seq2, normalize = True):
+    '''
+    Calculates hamming distance (number of positions where seq1 != seq2) for two equal length strings (seq1 and seq2).
+    If Normalize = True, return hamming distance / length(seq1) 
+    '''
     if len(seq1) != len(seq2):
         raise ValueError("sequence lengths must be equal")
     dist = 0.
     for i in range(len(seq1)):
         if seq1[i] != seq2[i]:
             dist += 1
+    if normalize:
+        return dist/len(seq1)
     return dist
         
-def get_distance(seq1, seq2):
-    
-    return get_hamming_dist(seq1, seq2)/len(seq1)
-
 
 def get_rnai_score(dna_seq1, dna_seq2, weights_dic, weight_distance = .5):
+    '''
+    For two DNA sequences and a dictionary of codon weights (key: codon, value: weight) calculates the 
+    CAI and Normalized Hamming distance. Performs a weighted average to combine the scores. 
+    
+    Returns CAI, Dist, Combined_score
+    '''
     cai = get_CAI(dna_seq1, weights_dic)
-    dist = get_distance(dna_seq1, dna_seq2)
+    dist = get_hamming_distance(dna_seq1, dna_seq2, normalize = True)
     combined_score = (1-weight_distance)*cai + weight_distance*dist
     return cai, dist, combined_score 
 
@@ -209,14 +235,31 @@ def get_random_codon(aminoacid, aminoacidcode = aminoacidcode, dont_use = '', we
     return np.random.choice(codon_list, p = weights/np.sum(weights))
 
 
-def get_RNAi_seq(ORF, protein, aminoacidweights, gencode_weights, trials = 10000, 
+def get_RNAi_seq(ORF, protein, aminoacidweights, gencode_weights, trials = 1000, 
                  enforce_different_codons = False):
     '''
+    Obtains random samples of recoded ORFs that encodes for a protein sequence (protein) based on CAI weights. Evaluates CAI and hamming distance to original ORF. 
+    
+    Arguments:
+        ORF: DNA sequence to be recoded 
+        Protein: Protein sequence (string with single letter amino acid code)
+                aminoacidweights: keys are amino acids, values are arrays of w_i for all synonymous codons. The order of the codons is the as those used in aminoacidcode. 
+        gencodeweights: keys are codons, values are w_i for each codon
+        trials: number of random sequences to generate (default 1000)
+        enforce_different_codons: enforce that for all amino acids withh multiple codons that selected codons be different from the one used in the ORF at that position. 
+    
+    Returns: 
+        seqs: Random sequences generate
+        scores: average of CAI and hamming distance for each sequence
+        cais: CAIs for each sequence
+        dists: Hamming distance for each sequence
+        
     '''
     seqs = []
     scores = []
     cais = []
     dists = []
+    protein = protein.upper()
     for i in range(trials):
         if enforce_different_codons:
             random_seq = random_reverse_translate(protein,
