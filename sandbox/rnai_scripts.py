@@ -4,7 +4,6 @@ import copy
 import numpy as np
 import Bio
 import scipy.spatial
-import itertools as it 
 
 # create dictionaries of amino acids and codons 
 gencode = {
@@ -49,48 +48,6 @@ aminoacidcode = {'I': ['ATA', 'ATC', 'ATT'],
  'C': ['TGC', 'TGT'],
  'W': ['TGG']}
 
-def get_codon_frequencies_doublets(transcriptome):
-    '''
-    Obtains all ordered codon doublet frequencies from transcriptome 
-    
-    transcriptome: a string of all transcripts of an organism concatenated
-    
-    returns: dictionary where keys are amino acids and values are frequencies of amino acid in
-    dictionary 
-    '''
-    
-    codon_counts_dic = {}
-  
-    for codons in it.permutations(gencode.keys(), 2):
-        c1, c2 = codons
-        codon_counts_dic[c1 + c2] = 0.
-    for codon in gencode.keys():
-        codon_counts_dic[codon + codon] = 0.
-        
-    
-  
-    ncodons = int(len(transcriptome)//3)
-    ncodons_good=0
-    for i in range(ncodons):
-        start = i*3
-        end = i*3 + 6
-        if end > len(transcriptome):
-            continue 
-        codons = transcriptome[start:end].upper()
-      #  print(codons)
-        codon_counts_dic[codons] = codon_counts_dic[codons] + 1 
-        ncodons_good = ncodons_good + 1
-
-   
-    codon_frequencies_dic = {}
-    npairs = len(codon_counts_dic.keys())
-  
-    for codons in codon_counts_dic.keys():
-        codon_frequencies_dic[codons] = codon_counts_dic[codons]/ncodons_good
-    return codon_frequencies_dic
-
-
-
 def read_fasta(filename):
     """Read a sequence in from a FASTA file containing a single sequence.
 
@@ -127,34 +84,20 @@ def translate(dna_seq):
         protein_seq = protein_seq + gencode[dna_seq[i*3:(i+1)*3]]
     return protein_seq
     
-def random_reverse_translate(protein_seq, weights_dic = None, change_seq = '', random = True, wiggle = False,
-                                       doubletscode = {}, pairs = True):
+def random_reverse_translate(protein_seq, weights_dic = None, change_seq = ''):
     """
     Return a random cDNA sequence for a given protein sequence (protein_seq). 
     """
     cDNA_seq = ''
     weights = np.zeros(1)
-    prev_codon = ''
-    if len(doubletscode) == 0:
-        pairs = False
     for i, aminoacid in enumerate(protein_seq):
-        if not pairs:
-            prev_codon = '' # do not incorporate information about previous codon
         if weights_dic:
             weights = weights_dic[aminoacid]
         if len(change_seq) > 0:
-            random_codon = get_random_codon(aminoacid, doubletscode = doubletscode, random = random, wiggle = wiggle,
-                                               weights = weights, prev_codon = prev_codon,
-                                                   dont_use = change_seq[3*i:3*(i+1)])
-            cDNA_seq = cDNA_seq + random_codon
-            prev_codon = random_codon
-            
+            cDNA_seq = cDNA_seq + get_random_codon(aminoacid, 
+                                               weights = weights, dont_use = change_seq[3*i:3*(i+1)])
         else:
-            random_codon = get_random_codon(aminoacid, doubletscode = doubletscode, random = random, wiggle = wiggle,
-                                               weights = weights, prev_codon = prev_codon,
-                                                   )
-            cDNA_seq = cDNA_seq + random_codon
-            prev_codon = random_codon
+            cDNA_seq = cDNA_seq + get_random_codon(aminoacid, weights = weights)
             
         
     assert translate(cDNA_seq) == protein_seq
@@ -186,15 +129,13 @@ def get_codon_frequencies(transcriptome):
     return codon_frequencies_dic
 
 
-
-
-def get_codon_weights(codon_frequencies_dic, aminoacidcode = aminoacidcode):
-    '''Creates a codon weighths for each codon from a dictionary of codon frequencies. 
+def get_codon_weights_dic(transcriptome, aminoacidcode = aminoacidcode):
+    '''Creates a codon weighths for each codon from a given transcriptome 
     weights are computed as follows: w_i = x_i,j/yj where x_i,j is the frequency of codon i for amino acid j
     in the transcriptome and y_j is the frequency of the maximally frequent codon for amino acid j 
     
     inputs:
-        frequencies: a dictionary of the codon frequencies (values) for each amino acid (keys)
+        transcriptome: a string of all transcripts of an organism concatenated
     
     outputs:
         
@@ -203,7 +144,7 @@ def get_codon_weights(codon_frequencies_dic, aminoacidcode = aminoacidcode):
         gencodeweights: keys are codons, values are w_i for each codon
     '''
     
-
+    codon_frequencies_dic = get_codon_frequencies(transcriptome)
     
     aminoacid_weights_dic = {}
     gencode_weights_dic = {}
@@ -222,8 +163,7 @@ def get_codon_weights(codon_frequencies_dic, aminoacidcode = aminoacidcode):
         aminoacid_weights_dic[aminoacid] = codon_weight_array
         for i, c in enumerate(codons):
             gencode_weights_dic[c] = codon_weight_array[i]
-    return aminoacid_weights_dic, gencode_weights_dic
-
+    return aminoacid_weights_dic, gencode_weights_dic 
 
 def get_CAI(dna_seq, weights_dic):
     '''
@@ -250,8 +190,7 @@ def get_hamming_dist(seq1, seq2, normalize = True):
     If Normalize = True, return hamming distance / length(seq1) 
     '''
     if len(seq1) != len(seq2):
-        print(len(seq1), len(seq2))
-      #  raise ValueError("sequence lengths must be equal")
+        raise ValueError("sequence lengths must be equal")
     dist = 0.
     for i in range(len(seq1)):
         if seq1[i] != seq2[i]:
@@ -269,69 +208,35 @@ def get_rnai_score(dna_seq1, dna_seq2, weights_dic, weight_distance = .5):
     Returns CAI, Dist, Combined_score
     '''
     cai = get_CAI(dna_seq1, weights_dic)
-    dist = get_hamming_dist(dna_seq1, dna_seq2, normalize = True)
+    dist = get_hamming_distance(dna_seq1, dna_seq2, normalize = True)
     combined_score = (1-weight_distance)*cai + weight_distance*dist
     return cai, dist, combined_score 
 
-
-def get_random_codon(aminoacid, aminoacidcode = aminoacidcode, doubletscode = {}, random = True, wiggle = False,
-                     dont_use = '', weights = np.zeros(1),
-                    prev_codon = ''):
+def get_random_codon(aminoacid, aminoacidcode = aminoacidcode, dont_use = '', weights = np.zeros(1)):
     '''Gets a random codon for aminoacid, aminoacid must be single letter amino acid code.
     '''
     
     codon_list = aminoacidcode[aminoacid]
-    weights = np.copy(weights)
-    doubletscode = copy.copy(doubletscode)
 
     if sum(weights == 0):
         weights = np.ones(len(codon_list)) # uniformly distributed weights list 
     if len(codon_list) < 2:
         dont_use = '' # only one option 
         
-        
     if dont_use != '':
         ind = codon_list.index(dont_use.upper())
-        
-        if len(codon_list) == 2 and wiggle and prev_codon == '':
-            extra_weight = .25
-            weights[ind] = weights[ind]*extra_weight
-            
+        if ind + 1 == len(codon_list):
+            codon_list = codon_list[:ind]
+            weights = np.array(list(weights[:ind]))
         else:
-            if ind + 1 == len(codon_list):
-                codon_list = codon_list[:ind]
-                weights = np.array(list(weights[:ind]))
-            else:
-                codon_list = codon_list[:ind] + codon_list[ind + 1:]
-                weights = np.array(list(weights[:ind])  + list(weights[ind + 1:]))  
-    if prev_codon != '':
-        doublets = []
-        weights = []
-        for codon in codon_list:
-            doublets.append(prev_codon + codon)
-            #print(doublets)
-            weights.append(doubletscode[prev_codon + codon])
-        if (len(codon_list) == 1) and dont_use != '':
-            if wiggle:
-                extra_weight = .25
-            else:
-                extra_weight = 0.
-            codon_list.append(dont_use)
-            doublets.append(prev_codon + dont_use)
-            weights.append(doubletscode[prev_codon + dont_use]*extra_weight) # sometimes alternative is terrible, so this allows for more wiggleroom
-          #  if wiggle:
-              #  print(codon_list)
-           
-       # print(codon_list, doublets, weights)
-    if random:
-        return np.random.choice(codon_list, p = np.array(weights)/np.sum(weights))
-    else:
-        best_ind = np.argmax(weights)
-        return codon_list[best_ind]
+            codon_list = codon_list[:ind] + codon_list[ind + 1:]
+            weights = np.array(list(weights[:ind])  + list(weights[ind + 1:]))   
+
+    return np.random.choice(codon_list, p = weights/np.sum(weights))
 
 
-def get_RNAi_seq(ORF, protein, aminoacidweights, gencode_weights, trials = 1000, doubletscode = {}, pairs = True, random = True,
-                 enforce_different_codons = False, wiggle = False):
+def get_RNAi_seq(ORF, protein, aminoacidweights, gencode_weights, trials = 1000, 
+                 enforce_different_codons = False):
     '''
     Obtains random samples of recoded ORFs that encodes for a protein sequence (protein) based on CAI weights. Evaluates CAI and hamming distance to original ORF. 
     
@@ -355,16 +260,13 @@ def get_RNAi_seq(ORF, protein, aminoacidweights, gencode_weights, trials = 1000,
     cais = []
     dists = []
     protein = protein.upper()
-    if len(doubletscode) == 0:
-        pairs = False
     for i in range(trials):
         if enforce_different_codons:
-            random_seq = random_reverse_translate(protein, random = random,
-                                          weights_dic = aminoacidweights, pairs = pairs, doubletscode = doubletscode, wiggle = wiggle,
+            random_seq = random_reverse_translate(protein,
+                                          weights_dic = aminoacidweights, 
                                              change_seq = ORF)
         else:
-            random_seq = random_reverse_translate(protein, random = random, pairs = pairs, doubletscode = doubletscode,
-                                                  wiggle = wiggle,
+            random_seq = random_reverse_translate(protein,
                                           weights_dic = aminoacidweights)
         seqs.append(random_seq)
         cai, dist, score = get_rnai_score(random_seq, ORF, 
